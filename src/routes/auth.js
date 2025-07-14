@@ -20,8 +20,13 @@ import {
     changePassword,
     verifyEmail
 } from '../controllers/authController.js';
+import debug from 'debug';
 
 const router = Router();
+
+const debugAuthRoutes = debug('app:authRoutes');
+
+debugAuthRoutes('Loading authRoutes');
 
 /**
  * @route   POST /api/auth/register

@@ -8,6 +8,7 @@ import trimRequest from 'trim-request';
 import path from 'path';
 import fs from 'fs-extra';
 import debug from 'debug';
+import { fileURLToPath } from 'url';
 
 // Configuration and utilities
 import config from './config/index.js';
@@ -31,6 +32,10 @@ import './services/cronService.js'; // Initialize cron jobs
 const app = express();
 const debugApp = debug('app:main');
 
+// Get current file URL for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Trust proxy for accurate client IP
 app.set('trust proxy', 1);
 
@@ -44,6 +49,7 @@ const ensureDirectories = async () => {
         await fs.ensureDir('logs');
         await fs.ensureDir('uploads');
         await fs.ensureDir('public');
+        await fs.ensureDir('views');
         debugApp('Directories ensured');
     } catch (error) {
         logger.error('Failed to create directories:', error);
@@ -158,10 +164,11 @@ const setupRoutes = () => {
 
     // Root route
     app.get('/', (req, res) => {
-        res.render('index', {
-            title: config.app.name,
+        res.json({
+            message: `${config.app.name} is running`,
             version: config.app.version,
-            env: config.env
+            environment: config.env,
+            timestamp: new Date().toISOString()
         });
     });
 
@@ -180,12 +187,24 @@ const setupRoutes = () => {
 // Database connections
 const connectServices = async () => {
     try {
+        debugApp('Connecting to services...');
+
+        // Connect to database first
         await connectDatabase();
-        await connectRedis();
-        logger.info('All services connected successfully');
+        logger.info('Database connected successfully');
+
+        // Then connect to Redis (optional - app should work without Redis)
+        try {
+            await connectRedis();
+            logger.info('Redis connected successfully');
+        } catch (redisError) {
+            logger.warn('Redis connection failed, continuing without Redis:', redisError.message);
+        }
+
+        logger.info('Services connection completed');
     } catch (error) {
-        logger.error('Failed to connect services:', error);
-        process.exit(1);
+        logger.error('Failed to connect to required services:', error);
+        throw error;
     }
 };
 
@@ -193,7 +212,6 @@ const connectServices = async () => {
 const setupGracefulShutdown = () => {
     const gracefulShutdown = (signal) => {
         logger.info(`${signal} received, shutting down gracefully`);
-
         process.exit(0);
     };
 
@@ -216,10 +234,19 @@ const initializeApp = async () => {
     try {
         debugApp('Initializing application...');
 
+        // Ensure directories exist first
         await ensureDirectories();
+
+        // Connect to services
         await connectServices();
+
+        // Setup middleware
         setupMiddleware();
+
+        // Setup routes
         setupRoutes();
+
+        // Setup graceful shutdown
         setupGracefulShutdown();
 
         logger.info(`${config.app.name} v${config.app.version} initialized successfully`);
@@ -235,13 +262,15 @@ const initializeApp = async () => {
 // Export the app for testing or direct use
 export default app;
 
-// Initialize if running directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Check if this file is being run directly
+if (process.argv[1] === __filename) {
+    debugApp('Starting application directly...');
     initializeApp().then(async (app) => {
-        const server = await import('./server.js');
-        server.startServer(app);
+        // Import and start server
+        const { startServer } = await import('./server.js');
+        await startServer(app);
     }).catch(error => {
-        logger.error('Failed to initialize application:', error);
+        logger.error('Failed to start application:', error);
         process.exit(1);
     });
 }

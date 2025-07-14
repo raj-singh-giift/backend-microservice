@@ -3,6 +3,11 @@ import { query } from '../config/database.js';
 import { cacheService } from '../services/cacheService.js';
 import logger from '../config/logger.js';
 import { getRequestId } from '../middleware/requestTracker.js';
+import debug from 'debug';
+
+const debugUserController = debug('app:userController');
+
+debugUserController('Loading userController');
 
 /**
  * Get current user profile

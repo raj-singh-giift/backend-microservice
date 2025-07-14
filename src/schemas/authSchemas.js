@@ -1,4 +1,9 @@
 import Joi from 'joi';
+import debug from 'debug';
+
+const debugAuthSchemas = debug('app:authSchemas');
+
+debugAuthSchemas('Loading authSchemas');
 
 /**
  * Password validation schema

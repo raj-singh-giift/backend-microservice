@@ -1,4 +1,5 @@
 import Redis from 'redis';
+import debug from 'debug';
 import config from './index.js';
 import logger from './logger.js';
 
@@ -21,7 +22,7 @@ const redisConfig = {
             return Math.min(retries * 50, 500);
         }
     },
-    password: config.redis.password,
+    password: config.redis.password || undefined,
     database: config.redis.db,
     name: 'production-backend',
     lazyConnect: true

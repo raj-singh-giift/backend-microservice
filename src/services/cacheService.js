@@ -1,6 +1,9 @@
 import { setCache, getCache, deleteCache, existsCache, setCacheMultiple } from '../config/redis.js';
 import logger from '../config/logger.js';
 import config from '../config/index.js';
+import debug from 'debug';
+
+const debugCache = debug('app:cache');
 
 /**
  * Cache service with advanced features
@@ -23,7 +26,7 @@ export class CacheService {
      */
     async set(key, value, ttl = this.defaultTTL, tags = []) {
         const cacheKey = this.generateKey(key);
-
+        debugCache('Setting cache:', { key: cacheKey, ttl, tags });
         try {
             await setCache(cacheKey, value, ttl);
 
@@ -48,7 +51,7 @@ export class CacheService {
      */
     async get(key) {
         const cacheKey = this.generateKey(key);
-
+        debugCache('Getting cache:', { key: cacheKey });
         try {
             const value = await getCache(cacheKey);
             logger.debug('Cache get', { key: cacheKey, hit: value !== null });
@@ -64,7 +67,7 @@ export class CacheService {
      */
     async delete(key) {
         const cacheKey = this.generateKey(key);
-
+        debugCache('Deleting cache:', { key: cacheKey });
         try {
             const result = await deleteCache(cacheKey);
             logger.debug('Cache delete', { key: cacheKey, existed: result });
@@ -88,7 +91,7 @@ export class CacheService {
      */
     async remember(key, fn, ttl = this.defaultTTL) {
         const cached = await this.get(key);
-
+        debugCache('Remembering cache:', { key });
         if (cached !== null) {
             logger.debug('Cache hit for remember function', { key });
             return cached;
@@ -105,6 +108,7 @@ export class CacheService {
      * Invalidate cache by tags
      */
     async invalidateByTags(tags) {
+        debugCache('Invalidating cache by tags:', { tags });
         try {
             for (const tag of tags) {
                 const tagKey = this.generateKey(`tag:${tag}`);

@@ -1,4 +1,9 @@
 import Joi from 'joi';
+import debug from 'debug';
+
+const debugUserSchemas = debug('app:userSchemas');
+
+debugUserSchemas('Loading userSchemas');
 
 /**
  * User profile update schema

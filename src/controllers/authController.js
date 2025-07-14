@@ -4,15 +4,23 @@ import { updateRecord, insertRecord } from '../utils/database.js';
 import { cacheService } from '../services/cacheService.js';
 import logger from '../config/logger.js';
 import { getRequestId } from '../middleware/requestTracker.js';
+import { query } from '../config/database.js';
+import debug from 'debug';
+
+const debugAuthController = debug('app:authController');
+
+debugAuthController('Loading authController');
 
 const authService = new AuthService();
+
+const debugAuth = debug('app:auth');
 
 /**
  * Register a new user
  */
 export const register = async (req, res) => {
     const { firstName, lastName, email, password, phone, dateOfBirth } = req.body;
-
+    debugAuth('Registering user:', { firstName, lastName, email, password, phone, dateOfBirth });
     try {
         const result = await authService.register({
             firstName,
@@ -57,7 +65,7 @@ export const register = async (req, res) => {
  */
 export const login = async (req, res) => {
     const { email, password, rememberMe } = req.body;
-
+    debugAuth('Logging in user:', { email, password, rememberMe });
     try {
         const result = await authService.login(email, password, rememberMe);
 
@@ -101,7 +109,7 @@ export const login = async (req, res) => {
 export const logout = async (req, res) => {
     const { refreshToken } = req.body;
     const userId = req.user.id;
-
+    debugAuth('Logging out user:', { userId, refreshToken });
     try {
         await authService.logout(userId, refreshToken);
 
@@ -133,7 +141,7 @@ export const logout = async (req, res) => {
  */
 export const refreshToken = async (req, res) => {
     const { refreshToken } = req.body;
-
+    debugAuth('Refreshing token:', { refreshToken });
     try {
         // Verify refresh token
         const tokenResult = await query(
@@ -191,7 +199,7 @@ export const refreshToken = async (req, res) => {
  */
 export const forgotPassword = async (req, res) => {
     const { email } = req.body;
-
+    debugAuth('Forgot password:', { email });
     try {
         // Check if user exists
         const userResult = await query(
@@ -250,7 +258,7 @@ export const forgotPassword = async (req, res) => {
  */
 export const resetPassword = async (req, res) => {
     const { token, password } = req.body;
-
+    debugAuth('Resetting password:', { token, password });
     try {
         // Verify reset token
         const tokenResult = await query(
@@ -313,7 +321,7 @@ export const resetPassword = async (req, res) => {
 export const changePassword = async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     const userId = req.user.id;
-
+    debugAuth('Changing password:', { userId, currentPassword, newPassword });
     try {
         // Get current password hash
         const userResult = await query(
@@ -374,7 +382,7 @@ export const changePassword = async (req, res) => {
  */
 export const verifyEmail = async (req, res) => {
     const { token } = req.params;
-
+    debugAuth('Verifying email:', { token });
     try {
         // Verify email token
         const tokenResult = await query(

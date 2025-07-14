@@ -1,6 +1,11 @@
 import logger from '../config/logger.js';
 import config from '../config/index.js';
 import { getRequestId } from './requestTracker.js';
+import debug from 'debug';
+
+const debugErrorHandler = debug('app:errorHandler');
+
+debugErrorHandler('Loading errorHandler middleware');
 
 /**
  * Custom error class for application errors

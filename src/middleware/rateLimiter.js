@@ -2,6 +2,9 @@ import rateLimit from 'express-rate-limit';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 import { getRedisClient } from '../config/redis.js';
+import debug from 'debug';
+
+const debugRateLimiter = debug('app:rateLimiter');
 
 /**
  * Redis store for rate limiting (optional)
@@ -84,6 +87,12 @@ export const rateLimiter = rateLimit({
 
     // Handler for when limit is exceeded
     handler: (req, res) => {
+        debugRateLimiter('Rate limit exceeded:', {
+            ip: req.ip,
+            userAgent: req.get('User-Agent'),
+            path: req.path,
+            userId: req.user?.id
+        });
         logger.warn('Rate limit exceeded:', {
             ip: req.ip,
             userAgent: req.get('User-Agent'),

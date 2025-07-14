@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import config from '../config/index.js';
 import logger from '../config/logger.js';
 import { getRequestId, setUserId } from './requestTracker.js';
+import debug from 'debug';
 
 const debugAuth = debug('app:auth');
 

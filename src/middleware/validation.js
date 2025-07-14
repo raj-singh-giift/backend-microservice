@@ -1,8 +1,11 @@
 import Joi from 'joi';
+import debug from 'debug';
 import logger from '../config/logger.js';
 import { getRequestId } from './requestTracker.js';
 
 const debugValidation = debug('app:validation');
+
+debugValidation('Loading validation middleware');
 
 /**
  * Create validation middleware for different request parts

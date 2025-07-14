@@ -16,10 +16,15 @@ import {
     updateUser,
     deleteUser
 } from '../controllers/userController.js';
+import debug from 'debug';
 
 const router = Router();
 
-/**
+const debugUsersRoutes = debug('app:usersRoutes');
+
+debugUsersRoutes('Loading usersRoutes');
+
+/** 
  * @route   GET /api/users/profile
  * @desc    Get current user profile
  * @access  Private
