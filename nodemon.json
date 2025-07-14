@@ -1,0 +1,13 @@
+{
+  "watch": ["src"],
+  "ext": "js,json,ejs",
+  "ignore": ["src/public", "src/uploads", "logs", "node_modules"],
+  "exec": "node src/app.js",
+  "env": {
+    "NODE_ENV": "development",
+    "DEBUG": "app:*"
+  },
+  "delay": 2000,
+  "verbose": true,
+  "restartable": "rs"
+}

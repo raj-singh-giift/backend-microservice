@@ -1,0 +1,183 @@
+export const indexTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><%= title %></title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 2rem;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        h1 {
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+            font-size: 2.5rem;
+        }
+        
+        .version {
+            color: #718096;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+        
+        .status {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 25px;
+            font-weight: 600;
+            margin-bottom: 2rem;
+        }
+        
+        .env-badge {
+            display: inline-block;
+            background: #4299e1;
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 15px;
+            font-size: 0.875rem;
+            margin-left: 1rem;
+        }
+        
+        .endpoints {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: left;
+        }
+        
+        .endpoints h3 {
+            color: #2d3748;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+        
+        .endpoint {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #4299e1;
+        }
+        
+        .endpoint-path {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-weight: 600;
+            color: #2d3748;
+        }
+        
+        .endpoint-desc {
+            color: #718096;
+            font-size: 0.875rem;
+        }
+        
+        .footer {
+            margin-top: 2rem;
+            color: #718096;
+            font-size: 0.875rem;
+        }
+        
+        .health-link {
+            display: inline-block;
+            background: #38b2ac;
+            color: white;
+            text-decoration: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+            transition: background 0.3s ease;
+        }
+        
+        .health-link:hover {
+            background: #319795;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🚀</div>
+        <h1><%= title %></h1>
+        <p class="version">Version <%= version %><span class="env-badge"><%= env %></span></p>
+        <div class="status">🟢 Online</div>
+        
+        <div class="endpoints">
+            <h3>Available Endpoints</h3>
+            
+            <div class="endpoint">
+                <div>
+                    <div class="endpoint-path">GET /api</div>
+                    <div class="endpoint-desc">API Information</div>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <div>
+                    <div class="endpoint-path">POST /api/auth/register</div>
+                    <div class="endpoint-desc">User Registration</div>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <div>
+                    <div class="endpoint-path">POST /api/auth/login</div>
+                    <div class="endpoint-desc">User Login</div>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <div>
+                    <div class="endpoint-path">GET /api/users/profile</div>
+                    <div class="endpoint-desc">User Profile (Protected)</div>
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <div>
+                    <div class="endpoint-path">GET /health</div>
+                    <div class="endpoint-desc">Health Check</div>
+                </div>
+            </div>
+        </div>
+        
+        <a href="/health" class="health-link">Check System Health</a>
+        
+        <div class="footer">
+            <p>Production-ready Node.js backend with comprehensive security and monitoring.</p>
+            <p>Built with Express, PostgreSQL, Redis, Winston, and more.</p>
+        </div>
+    </div>
+</body>
+</html>`;

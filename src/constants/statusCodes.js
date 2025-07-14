@@ -1,0 +1,42 @@
+export const STATUS_CODES = {
+    // Success
+    OK: 200,
+    CREATED: 201,
+    ACCEPTED: 202,
+    NO_CONTENT: 204,
+
+    // Client Errors
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
+    NOT_FOUND: 404,
+    METHOD_NOT_ALLOWED: 405,
+    CONFLICT: 409,
+    UNPROCESSABLE_ENTITY: 422,
+    TOO_MANY_REQUESTS: 429,
+
+    // Server Errors
+    INTERNAL_SERVER_ERROR: 500,
+    BAD_GATEWAY: 502,
+    SERVICE_UNAVAILABLE: 503,
+    GATEWAY_TIMEOUT: 504
+};
+
+export const STATUS_MESSAGES = {
+    [STATUS_CODES.OK]: 'OK',
+    [STATUS_CODES.CREATED]: 'Created',
+    [STATUS_CODES.ACCEPTED]: 'Accepted',
+    [STATUS_CODES.NO_CONTENT]: 'No Content',
+    [STATUS_CODES.BAD_REQUEST]: 'Bad Request',
+    [STATUS_CODES.UNAUTHORIZED]: 'Unauthorized',
+    [STATUS_CODES.FORBIDDEN]: 'Forbidden',
+    [STATUS_CODES.NOT_FOUND]: 'Not Found',
+    [STATUS_CODES.METHOD_NOT_ALLOWED]: 'Method Not Allowed',
+    [STATUS_CODES.CONFLICT]: 'Conflict',
+    [STATUS_CODES.UNPROCESSABLE_ENTITY]: 'Unprocessable Entity',
+    [STATUS_CODES.TOO_MANY_REQUESTS]: 'Too Many Requests',
+    [STATUS_CODES.INTERNAL_SERVER_ERROR]: 'Internal Server Error',
+    [STATUS_CODES.BAD_GATEWAY]: 'Bad Gateway',
+    [STATUS_CODES.SERVICE_UNAVAILABLE]: 'Service Unavailable',
+    [STATUS_CODES.GATEWAY_TIMEOUT]: 'Gateway Timeout'
+};
