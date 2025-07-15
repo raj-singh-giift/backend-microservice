@@ -13,6 +13,7 @@ import {
 } from '../utils/database.js';
 import { getRequestId } from '../middleware/requestTracker.js';
 import { cacheService } from '../services/cacheService.js';
+import { STATUS_CODES, STATUS_MESSAGES } from '../constants/statusCodes.js';
 
 const debugEmployeeController = debug('app:employeeController');
 
@@ -41,7 +42,7 @@ export const getEmployees = async (req, res) => {
         // Verify table exists and get schema
         const tableVerification = await verifyTable('employee');
         if (!tableVerification.exists) {
-            return res.status(404).json({
+            return res.status(STATUS_CODES.NOT_FOUND).json({
                 success: false,
                 message: 'Employee table not found',
                 requestId
@@ -132,7 +133,7 @@ export const getEmployees = async (req, res) => {
             pagination: result.pagination
         });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             data: result.data,
             pagination: result.pagination,
@@ -146,7 +147,7 @@ export const getEmployees = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to retrieve employees',
             requestId
@@ -183,7 +184,7 @@ export const getEmployeeById = async (req, res) => {
         });
 
         if (!employee) {
-            return res.status(404).json({
+            return res.status(STATUS_CODES.NOT_FOUND).json({
                 success: false,
                 message: 'Employee not found',
                 requestId
@@ -192,7 +193,7 @@ export const getEmployeeById = async (req, res) => {
 
         debugEmployeeController('Retrieved employee:', { id: employee[primaryKeyColumn] });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             data: employee,
             requestId
@@ -205,7 +206,7 @@ export const getEmployeeById = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to retrieve employee',
             requestId
@@ -236,7 +237,7 @@ export const createEmployee = async (req, res) => {
         });
 
         if (Object.keys(validData).length === 0) {
-            return res.status(400).json({
+            return res.status(STATUS_CODES.BAD_REQUEST).json({
                 success: false,
                 message: 'No valid employee data provided',
                 requestId
@@ -250,7 +251,7 @@ export const createEmployee = async (req, res) => {
         });
 
         if (!employee) {
-            return res.status(409).json({
+            return res.status(STATUS_CODES.CONFLICT).json({
                 success: false,
                 message: 'Employee with this information already exists',
                 requestId
@@ -259,7 +260,7 @@ export const createEmployee = async (req, res) => {
 
         debugEmployeeController('Created employee:', { id: employee.id || employee.emp_id });
 
-        res.status(201).json({
+        res.status(STATUS_CODES.CREATED).json({
             success: true,
             message: 'Employee created successfully',
             data: employee,
@@ -273,7 +274,7 @@ export const createEmployee = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to create employee',
             requestId
@@ -317,7 +318,7 @@ export const updateEmployee = async (req, res) => {
         });
 
         if (Object.keys(validData).length === 0) {
-            return res.status(400).json({
+            return res.status(STATUS_CODES.BAD_REQUEST).json({
                 success: false,
                 message: 'No valid update data provided',
                 requestId
@@ -332,7 +333,7 @@ export const updateEmployee = async (req, res) => {
         });
 
         if (!employee) {
-            return res.status(404).json({
+            return res.status(STATUS_CODES.NOT_FOUND).json({
                 success: false,
                 message: 'Employee not found or no changes made',
                 requestId
@@ -341,7 +342,7 @@ export const updateEmployee = async (req, res) => {
 
         debugEmployeeController('Updated employee:', { id });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             message: 'Employee updated successfully',
             data: employee,
@@ -356,7 +357,7 @@ export const updateEmployee = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to update employee',
             requestId
@@ -399,7 +400,7 @@ export const deleteEmployee = async (req, res) => {
         });
 
         if (!employee) {
-            return res.status(404).json({
+            return res.status(STATUS_CODES.NOT_FOUND).json({
                 success: false,
                 message: 'Employee not found',
                 requestId
@@ -408,7 +409,7 @@ export const deleteEmployee = async (req, res) => {
 
         debugEmployeeController('Deleted employee:', { id, softDelete: useSoftDelete });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             message: `Employee ${useSoftDelete ? 'deactivated' : 'deleted'} successfully`,
             data: { id: employee[primaryKeyColumn] },
@@ -422,7 +423,7 @@ export const deleteEmployee = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to delete employee',
             requestId
@@ -527,7 +528,7 @@ export const getEmployeeStats = async (req, res) => {
 
         debugEmployeeController('Retrieved employee statistics:', stats);
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             data: stats,
             requestId
@@ -539,7 +540,7 @@ export const getEmployeeStats = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to retrieve employee statistics',
             requestId
@@ -566,7 +567,7 @@ export const searchEmployees = async (req, res) => {
         debugEmployeeController('Searching employees:', { searchTerm, filters });
 
         if (!searchTerm || searchTerm.trim().length < 2) {
-            return res.status(400).json({
+            return res.status(STATUS_CODES.BAD_REQUEST).json({
                 success: false,
                 message: 'Search term must be at least 2 characters long',
                 requestId
@@ -640,7 +641,7 @@ export const searchEmployees = async (req, res) => {
             totalMatches: result.pagination.total
         });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             data: result.data,
             pagination: result.pagination,
@@ -656,7 +657,7 @@ export const searchEmployees = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to search employees',
             requestId
@@ -676,7 +677,7 @@ export const bulkEmployeeOperations = async (req, res) => {
         debugEmployeeController('Bulk operation:', { operation, count: employees?.length });
 
         if (!operation || !employees || !Array.isArray(employees)) {
-            return res.status(400).json({
+            return res.status(STATUS_CODES.BAD_REQUEST).json({
                 success: false,
                 message: 'Invalid bulk operation request',
                 requestId
@@ -707,7 +708,7 @@ export const bulkEmployeeOperations = async (req, res) => {
                 });
 
                 if (Object.keys(validUpdateData).length === 0) {
-                    return res.status(400).json({
+                    return res.status(STATUS_CODES.BAD_REQUEST).json({
                         success: false,
                         message: 'No valid update data provided',
                         requestId
@@ -755,7 +756,7 @@ export const bulkEmployeeOperations = async (req, res) => {
 
             case 'restore':
                 if (!schema.hasDeletedAt) {
-                    return res.status(400).json({
+                    return res.status(STATUS_CODES.BAD_REQUEST).json({
                         success: false,
                         message: 'Restore operation not supported - table does not support soft deletes',
                         requestId
@@ -779,7 +780,7 @@ export const bulkEmployeeOperations = async (req, res) => {
                 break;
 
             default:
-                return res.status(400).json({
+                return res.status(STATUS_CODES.BAD_REQUEST).json({
                     success: false,
                     message: `Unsupported bulk operation: ${operation}`,
                     requestId
@@ -796,7 +797,7 @@ export const bulkEmployeeOperations = async (req, res) => {
             failed: failureCount
         });
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             message: `Bulk ${operation} completed`,
             results,
@@ -815,7 +816,7 @@ export const bulkEmployeeOperations = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Bulk operation failed',
             requestId
@@ -835,7 +836,7 @@ export const getEmployeeSchema = async (req, res) => {
         const tableInfo = await verifyTable('employee', { createIndexes: false });
 
         if (!tableInfo.exists) {
-            return res.status(404).json({
+            return res.status(STATUS_CODES.NOT_FOUND).json({
                 success: false,
                 message: 'Employee table not found',
                 requestId
@@ -865,7 +866,7 @@ export const getEmployeeSchema = async (req, res) => {
             recommendations: tableInfo.recommendations
         };
 
-        res.json({
+        res.status(STATUS_CODES.OK).json({
             success: true,
             data: schemaInfo,
             requestId
@@ -877,7 +878,7 @@ export const getEmployeeSchema = async (req, res) => {
             requestId
         });
 
-        res.status(500).json({
+        res.status(STATUS_CODES.INTERNAL_SERVER_ERROR).json({
             success: false,
             message: 'Failed to retrieve schema information',
             requestId
