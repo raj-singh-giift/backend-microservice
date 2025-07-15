@@ -141,7 +141,7 @@ export const getTableSchema = async (tableName) => {
  * @param {string} procedureName - Procedure name
  * @returns {Promise<Object>} Procedure info
  */
-export const getProcedureSchema = async (procedureName) => {
+const getProcedureSchema = async (procedureName) => {
     const cacheKey = `procedure:${procedureName}`;
 
     // Check memory cache first
