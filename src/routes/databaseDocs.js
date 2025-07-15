@@ -6,6 +6,11 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import logger from '../config/logger.js';
 import { getRequestId } from '../middleware/requestTracker.js';
 import { cacheService } from '../services/cacheService.js';
+import debug from 'debug';
+
+const debugDatabaseDocs = debug('app:databaseDocs');
+
+debugDatabaseDocs('Loading databaseDocs');
 
 const router = Router();
 const debugDocs = debug('app:docs');

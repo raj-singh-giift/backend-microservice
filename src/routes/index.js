@@ -3,7 +3,7 @@ import authRoutes from './auth.js';
 import userRoutes from './users.js';
 import healthRoutes from './health.js';
 import databaseDocs from './databaseDocs.js';
-import databaseDocsRoutes from './databaseDocs.js';
+import employeeRoutes from './employee.js';
 
 const router = Router();
 
@@ -15,7 +15,9 @@ router.get('/', (req, res) => {
         endpoints: {
             auth: '/api/auth',
             users: '/api/users',
-            health: '/api/health'
+            health: '/api/health',
+            database: '/api/database',
+            employees: '/api/employees'
         },
         documentation: '/api/docs'
     });
@@ -26,6 +28,6 @@ router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/health', healthRoutes);
 router.use('/database', databaseDocs);
-router.use('/docs/database', databaseDocsRoutes);
+router.use('/employee', employeeRoutes);
 
 export default router;
