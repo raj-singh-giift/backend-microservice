@@ -98,7 +98,7 @@ export const getTableSchema = async (tableName) => {
                 hasCreatedAt: result.rows.some(row => row.column_name === 'created_at'),
                 hasUpdatedAt: result.rows.some(row => row.column_name === 'updated_at'),
                 hasVersion: result.rows.some(row => row.column_name === 'version'),
-                primaryKey: null, // Will be populated separately if needed
+                primaryKey: null,
                 lastUpdated: new Date()
             };
 
@@ -137,11 +137,106 @@ export const getTableSchema = async (tableName) => {
 };
 
 /**
- * Clear schema cache for a table
- * @param {string} tableName - Table name
+ * Get stored procedure information with caching
+ * @param {string} procedureName - Procedure name
+ * @returns {Promise<Object>} Procedure info
  */
-const clearSchemaCache = async (tableName) => {
-    const cacheKey = `schema:${tableName}`;
+export const getProcedureSchema = async (procedureName) => {
+    const cacheKey = `procedure:${procedureName}`;
+
+    // Check memory cache first
+    if (schemaCache.has(cacheKey)) {
+        return schemaCache.get(cacheKey);
+    }
+
+    // Check Redis cache
+    let schema = await cacheService.get(cacheKey);
+
+    if (!schema) {
+        const startTime = Date.now();
+
+        try {
+            // Get procedure information from information_schema
+            const procedureQuery = `
+                SELECT 
+                    p.specific_name,
+                    p.routine_name,
+                    p.routine_type,
+                    p.data_type as return_type,
+                    p.type_udt_name,
+                    p.routine_definition,
+                    COALESCE(
+                        array_agg(
+                            CASE 
+                                WHEN pp.parameter_name IS NOT NULL 
+                                THEN json_build_object(
+                                    'name', pp.parameter_name,
+                                    'type', pp.data_type,
+                                    'mode', pp.parameter_mode,
+                                    'position', pp.ordinal_position
+                                )
+                                ELSE NULL
+                            END
+                            ORDER BY pp.ordinal_position
+                        ) FILTER (WHERE pp.parameter_name IS NOT NULL),
+                        ARRAY[]::json[]
+                    ) as parameters
+                FROM information_schema.routines p
+                LEFT JOIN information_schema.parameters pp 
+                    ON p.specific_name = pp.specific_name
+                WHERE p.routine_name = $1
+                AND p.routine_schema = COALESCE(CURRENT_SCHEMA(), 'public')
+                GROUP BY p.specific_name, p.routine_name, p.routine_type, 
+                         p.data_type, p.type_udt_name, p.routine_definition
+            `;
+
+            const result = await query(procedureQuery, [procedureName]);
+
+            if (result.rows.length === 0) {
+                throw new Error(`Procedure '${procedureName}' not found`);
+            }
+
+            const procedureInfo = result.rows[0];
+
+            schema = {
+                procedureName,
+                specificName: procedureInfo.specific_name,
+                routineType: procedureInfo.routine_type, // FUNCTION or PROCEDURE
+                returnType: procedureInfo.return_type,
+                parameters: procedureInfo.parameters || [],
+                parameterCount: procedureInfo.parameters ? procedureInfo.parameters.length : 0,
+                hasInputParams: procedureInfo.parameters.some(p => p.mode === 'IN' || p.mode === 'INOUT'),
+                hasOutputParams: procedureInfo.parameters.some(p => p.mode === 'OUT' || p.mode === 'INOUT'),
+                isFunction: procedureInfo.routine_type === 'FUNCTION',
+                isProcedure: procedureInfo.routine_type === 'PROCEDURE',
+                lastUpdated: new Date()
+            };
+
+            // Cache schema for 1 hour
+            await cacheService.set(cacheKey, schema, 3600);
+            schemaCache.set(cacheKey, schema);
+
+            logDatabaseOperation('getProcedureSchema', procedureQuery, [procedureName], startTime, result);
+
+        } catch (error) {
+            logDatabaseOperation('getProcedureSchema', `PROCEDURE SCHEMA ${procedureName}`, [procedureName], startTime, null, error);
+            throw error;
+        }
+    } else {
+        // Update memory cache from Redis
+        schemaCache.set(cacheKey, schema);
+    }
+
+    return schema;
+};
+
+/**
+ * Clear schema cache for a table or procedure
+ * @param {string} name - Table or procedure name
+ * @param {string} type - 'table' or 'procedure'
+ */
+const clearSchemaCache = async (name, type = 'table') => {
+    const cacheKey = type === 'procedure' ? `procedure:${name}` : `schema:${name}`;
     schemaCache.delete(cacheKey);
     await cacheService.delete(cacheKey);
 };
@@ -230,6 +325,217 @@ const executeWithTimeout = async (queryText, params, timeout) => {
 };
 
 /**
+ * Execute stored procedure with enhanced error handling and logging
+ * @param {string} procedureName - Stored procedure name
+ * @param {Array} params - Procedure parameters
+ * @param {Object} options - Execution options
+ * @returns {Promise<Object>} Procedure result
+ */
+export const executeStoredProcedure = async (procedureName, params = [], options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            validateParams = true,
+            timeout = 30000,
+            useCache = false,
+            cacheTTL = 300
+        } = options;
+
+        // Get procedure schema for validation if enabled
+        let procedureSchema = null;
+        if (validateParams) {
+            procedureSchema = await getProcedureSchema(procedureName);
+
+            // Validate parameter count
+            const expectedParams = procedureSchema.parameters.filter(p => p.mode === 'IN' || p.mode === 'INOUT');
+            if (params.length !== expectedParams.length) {
+                throw new Error(
+                    `Parameter count mismatch for procedure '${procedureName}'. ` +
+                    `Expected ${expectedParams.length}, got ${params.length}`
+                );
+            }
+        }
+
+        // Check cache if enabled
+        if (useCache) {
+            const cacheKey = `procedure:${procedureName}:${Buffer.from(JSON.stringify(params)).toString('base64').substring(0, 16)}`;
+            const cached = await cacheService.get(cacheKey);
+            if (cached) {
+                debugDb(`Cache hit for stored procedure: ${cacheKey}`);
+                return cached;
+            }
+        }
+
+        const placeholders = params.map((_, index) => `$${index + 1}`).join(', ');
+        const queryText = `CALL ${procedureName}(${placeholders})`;
+
+        const result = timeout > 0
+            ? await executeWithTimeout(queryText, params, timeout)
+            : await query(queryText, params);
+
+        // Cache result if enabled and procedure is deterministic
+        if (useCache && procedureSchema?.isFunction) {
+            const cacheKey = `procedure:${procedureName}:${Buffer.from(JSON.stringify(params)).toString('base64').substring(0, 16)}`;
+            await cacheService.set(cacheKey, result, cacheTTL, [`procedure:${procedureName}`]);
+        }
+
+        logDatabaseOperation('executeStoredProcedure', queryText, params, startTime, result);
+        return result;
+
+    } catch (error) {
+        logDatabaseOperation('executeStoredProcedure', `CALL ${procedureName}`, params, startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute function (for PostgreSQL functions that return values)
+ * @param {string} functionName - Function name
+ * @param {Array} params - Function parameters
+ * @param {Object} options - Execution options
+ * @returns {Promise<Object>} Function result
+ */
+export const executeFunction = async (functionName, params = [], options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            validateParams = true,
+            timeout = 30000,
+            useCache = false,
+            cacheTTL = 300,
+            returnType = 'table' // 'table', 'scalar', 'record'
+        } = options;
+
+        // Get function schema for validation if enabled
+        let functionSchema = null;
+        if (validateParams) {
+            functionSchema = await getProcedureSchema(functionName);
+
+            if (!functionSchema.isFunction) {
+                throw new Error(`'${functionName}' is not a function`);
+            }
+
+            // Validate parameter count
+            const expectedParams = functionSchema.parameters.filter(p => p.mode === 'IN' || p.mode === 'INOUT');
+            if (params.length !== expectedParams.length) {
+                throw new Error(
+                    `Parameter count mismatch for function '${functionName}'. ` +
+                    `Expected ${expectedParams.length}, got ${params.length}`
+                );
+            }
+        }
+
+        // Check cache if enabled
+        if (useCache) {
+            const cacheKey = `function:${functionName}:${Buffer.from(JSON.stringify(params)).toString('base64').substring(0, 16)}`;
+            const cached = await cacheService.get(cacheKey);
+            if (cached) {
+                debugDb(`Cache hit for function: ${cacheKey}`);
+                return cached;
+            }
+        }
+
+        let queryText;
+        const placeholders = params.map((_, index) => `$${index + 1}`).join(', ');
+
+        if (returnType === 'scalar') {
+            queryText = `SELECT ${functionName}(${placeholders}) as result`;
+        } else if (returnType === 'record') {
+            queryText = `SELECT ${functionName}(${placeholders}) as result`;
+        } else {
+            // Default to table-valued function
+            queryText = `SELECT * FROM ${functionName}(${placeholders})`;
+        }
+
+        const result = timeout > 0
+            ? await executeWithTimeout(queryText, params, timeout)
+            : await query(queryText, params);
+
+        // Process result based on return type
+        let processedResult = result;
+        if (returnType === 'scalar' && result.rows.length > 0) {
+            processedResult = {
+                ...result,
+                value: result.rows[0].result,
+                rows: result.rows
+            };
+        }
+
+        // Cache result if enabled
+        if (useCache) {
+            const cacheKey = `function:${functionName}:${Buffer.from(JSON.stringify(params)).toString('base64').substring(0, 16)}`;
+            await cacheService.set(cacheKey, processedResult, cacheTTL, [`function:${functionName}`]);
+        }
+
+        logDatabaseOperation('executeFunction', queryText, params, startTime, result);
+        return processedResult;
+
+    } catch (error) {
+        logDatabaseOperation('executeFunction', `SELECT ${functionName}`, params, startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute batch of stored procedures in a transaction
+ * @param {Array} procedures - Array of procedure calls {name, params, options}
+ * @param {Object} transactionOptions - Transaction options
+ * @returns {Promise<Array>} Array of results
+ */
+export const executeBatchProcedures = async (procedures, transactionOptions = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const { timeout = 60000, isolationLevel = null } = transactionOptions;
+
+        if (!Array.isArray(procedures) || procedures.length === 0) {
+            throw new Error('Procedures array cannot be empty');
+        }
+
+        const results = [];
+
+        await executeTransaction(async (client) => {
+            // Set isolation level if specified
+            if (isolationLevel) {
+                await client.query(`SET TRANSACTION ISOLATION LEVEL ${isolationLevel}`);
+            }
+
+            for (const proc of procedures) {
+                const { name, params = [], options = {} } = proc;
+
+                // Validate procedure exists
+                if (options.validateParams !== false) {
+                    await getProcedureSchema(name);
+                }
+
+                const placeholders = params.map((_, index) => `$${index + 1}`).join(', ');
+                const queryText = `CALL ${name}(${placeholders})`;
+
+                const result = await client.query(queryText, params);
+                results.push({
+                    procedureName: name,
+                    result,
+                    params
+                });
+
+                debugDb(`Executed procedure in batch: ${name}`);
+            }
+
+            return results;
+        }, { timeout });
+
+        logDatabaseOperation('executeBatchProcedures', `BATCH ${procedures.length} procedures`, [], startTime, { rowCount: results.length });
+        return results;
+
+    } catch (error) {
+        logDatabaseOperation('executeBatchProcedures', 'BATCH PROCEDURES', [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
  * Enhanced paginated query with schema awareness and caching
  * @param {string} baseQuery - Base SQL query without LIMIT/OFFSET
  * @param {Array} params - Query parameters
@@ -250,7 +556,7 @@ export const paginatedQuery = async (baseQuery, params = [], paginationOptions =
             timeout = 30000,
             tableName = null,
             useCache = false,
-            cacheTTL = 300 // 5 minutes
+            cacheTTL = 300
         } = paginationOptions;
 
         // Validate and sanitize inputs
@@ -540,7 +846,7 @@ export const deleteRecord = async (tableName, whereConditions, options = {}) => 
         const useSoftDelete = softDelete !== null ? softDelete : schema.hasDeletedAt;
 
         const whereClause = whereColumns.length > 0
-            ? whereColumns.map((col, index) => `${col} = $${index + 1}`).join(' AND ')
+            ? whereColumns.map((col, index) => `${col} = ${index + 1}`).join(' AND ')
             : '1=1';
 
         let queryText;
@@ -645,13 +951,13 @@ export const advancedQuery = async (tableName, options = {}) => {
             }
 
             if (Array.isArray(value)) {
-                const placeholders = value.map(() => `$${paramIndex++}`).join(', ');
+                const placeholders = value.map(() => `${paramIndex++}`).join(', ');
                 whereClauses.push(`${key} IN (${placeholders})`);
                 params.push(...value);
             } else if (value === null) {
                 whereClauses.push(`${key} IS NULL`);
             } else {
-                whereClauses.push(`${key} = $${paramIndex++}`);
+                whereClauses.push(`${key} = ${paramIndex++}`);
                 params.push(value);
             }
         });
@@ -1332,11 +1638,753 @@ export const verifyTable = async (tableName, options = {}) => {
     }
 };
 
+/**
+ * Get stored procedure/function list with metadata
+ * @param {Object} options - Query options
+ * @returns {Promise<Array>} List of procedures/functions
+ */
+export const listProceduresAndFunctions = async (options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            routineType = null, // 'FUNCTION', 'PROCEDURE', or null for both
+            schema = 'public'
+        } = options;
+
+        let whereClause = 'WHERE r.routine_schema = $1';
+        const params = [schema];
+
+        if (routineType) {
+            whereClause += ' AND r.routine_type = $2';
+            params.push(routineType);
+        }
+
+        const listQuery = `
+            SELECT 
+                r.routine_name,
+                r.routine_type,
+                r.data_type as return_type,
+                r.routine_definition,
+                COUNT(p.parameter_name) as parameter_count,
+                array_agg(
+                    CASE 
+                        WHEN p.parameter_name IS NOT NULL 
+                        THEN json_build_object(
+                            'name', p.parameter_name,
+                            'type', p.data_type,
+                            'mode', p.parameter_mode
+                        )
+                        ELSE NULL
+                    END
+                ) FILTER (WHERE p.parameter_name IS NOT NULL) as parameters
+            FROM information_schema.routines r
+            LEFT JOIN information_schema.parameters p 
+                ON r.specific_name = p.specific_name
+            ${whereClause}
+            GROUP BY r.routine_name, r.routine_type, r.data_type, r.routine_definition
+            ORDER BY r.routine_type, r.routine_name
+        `;
+
+        const result = await query(listQuery, params);
+
+        logDatabaseOperation('listProceduresAndFunctions', listQuery, params, startTime, result);
+        return result.rows;
+
+    } catch (error) {
+        logDatabaseOperation('listProceduresAndFunctions', 'LIST PROCEDURES/FUNCTIONS', [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute dynamic SQL with parameter validation
+ * @param {string} sqlTemplate - SQL template with placeholders
+ * @param {Object} params - Named parameters
+ * @param {Object} options - Execution options
+ * @returns {Promise<Object>} Query result
+ */
+export const executeDynamicSQL = async (sqlTemplate, params = {}, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            allowedTables = [],
+            allowedColumns = {},
+            timeout = 30000,
+            validateSQL = true
+        } = options;
+
+        if (validateSQL) {
+            // Basic SQL injection prevention
+            const suspiciousPatterns = [
+                /;\s*drop\s+/i,
+                /;\s*delete\s+/i,
+                /;\s*truncate\s+/i,
+                /;\s*alter\s+/i,
+                /--/,
+                /\/\*/,
+                /\*\//
+            ];
+
+            for (const pattern of suspiciousPatterns) {
+                if (pattern.test(sqlTemplate)) {
+                    throw new Error('Potentially dangerous SQL detected');
+                }
+            }
+
+            // Validate table names if specified
+            if (allowedTables.length > 0) {
+                const tablePattern = /FROM\s+(\w+)|JOIN\s+(\w+)|UPDATE\s+(\w+)|INSERT\s+INTO\s+(\w+)/gi;
+                let match;
+                while ((match = tablePattern.exec(sqlTemplate)) !== null) {
+                    const tableName = match[1] || match[2] || match[3] || match[4];
+                    if (!allowedTables.includes(tableName)) {
+                        throw new Error(`Table '${tableName}' not in allowed tables list`);
+                    }
+                }
+            }
+        }
+
+        // Replace named parameters with positional parameters
+        let finalSQL = sqlTemplate;
+        const paramValues = [];
+        let paramIndex = 1;
+
+        Object.entries(params).forEach(([key, value]) => {
+            const placeholder = `:${key}`;
+            while (finalSQL.includes(placeholder)) {
+                finalSQL = finalSQL.replace(placeholder, `${paramIndex}`);
+                paramValues.push(value);
+                paramIndex++;
+            }
+        });
+
+        const result = timeout > 0
+            ? await executeWithTimeout(finalSQL, paramValues, timeout)
+            : await query(finalSQL, paramValues);
+
+        logDatabaseOperation('executeDynamicSQL', finalSQL, paramValues, startTime, result);
+        return result;
+
+    } catch (error) {
+        logDatabaseOperation('executeDynamicSQL', sqlTemplate, Object.values(params), startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute raw SQL with enhanced safety checks
+ * @param {string} sqlQuery - Raw SQL query
+ * @param {Array} params - Query parameters
+ * @param {Object} options - Execution options
+ * @returns {Promise<Object>} Query result
+ */
+export const executeRawSQL = async (sqlQuery, params = [], options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            allowDangerous = false,
+            timeout = 30000,
+            returnFirst = false
+        } = options;
+
+        if (!allowDangerous) {
+            // Basic safety checks
+            const dangerousPatterns = [
+                /drop\s+table/i,
+                /drop\s+database/i,
+                /truncate/i,
+                /delete\s+from.*without\s+where/i
+            ];
+
+            for (const pattern of dangerousPatterns) {
+                if (pattern.test(sqlQuery)) {
+                    throw new Error('Dangerous SQL operation detected. Use allowDangerous: true to override.');
+                }
+            }
+        }
+
+        const result = timeout > 0
+            ? await executeWithTimeout(sqlQuery, params, timeout)
+            : await query(sqlQuery, params);
+
+        logDatabaseOperation('executeRawSQL', sqlQuery, params, startTime, result);
+
+        if (returnFirst && result.rows.length > 0) {
+            return { ...result, data: result.rows[0] };
+        }
+
+        return result;
+
+    } catch (error) {
+        logDatabaseOperation('executeRawSQL', sqlQuery, params, startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Bulk update records with schema validation
+ * @param {string} tableName - Table name
+ * @param {Array} updates - Array of update objects {where, data}
+ * @param {Object} options - Update options
+ * @returns {Promise<Array>} Array of updated records
+ */
+export const bulkUpdate = async (tableName, updates, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            batchSize = 500,
+            timeout = 60000,
+            validateSchema = true,
+            returning = '*'
+        } = options;
+
+        if (!Array.isArray(updates) || updates.length === 0) {
+            throw new Error('Updates array cannot be empty');
+        }
+
+        // Get table schema if validation is enabled
+        let schema = null;
+        if (validateSchema) {
+            schema = await getTableSchema(tableName);
+        }
+
+        const results = [];
+
+        await executeTransaction(async (client) => {
+            // Process in batches
+            for (let i = 0; i < updates.length; i += batchSize) {
+                const batch = updates.slice(i, i + batchSize);
+
+                for (const update of batch) {
+                    const { where, data } = update;
+
+                    if (!where || !data) {
+                        throw new Error('Each update must have "where" and "data" properties');
+                    }
+
+                    let validData = data;
+
+                    // Validate and filter data if schema validation is enabled
+                    if (schema) {
+                        validData = {};
+                        Object.entries(data).forEach(([key, value]) => {
+                            if (schema.columns[key]) {
+                                validData[key] = value;
+                            } else {
+                                logger.warn(`Column '${key}' not found in table '${tableName}', skipping`);
+                            }
+                        });
+
+                        // Auto-add updated_at if it exists and isn't provided
+                        if (schema.hasUpdatedAt && !validData.updated_at) {
+                            validData.updated_at = new Date();
+                        }
+                    }
+
+                    const result = await updateRecord(tableName, validData, where, {
+                        returning,
+                        validate: false // Skip individual validation in bulk
+                    });
+
+                    if (result) results.push(result);
+                }
+            }
+
+            return results;
+        }, { timeout });
+
+        // Invalidate cache after successful bulk update
+        await invalidateCache(tableName, 'bulkUpdate');
+
+        logDatabaseOperation('bulkUpdate', `BULK UPDATE ${tableName}`, [`${updates.length} records`], startTime, { rowCount: results.length });
+        return results;
+
+    } catch (error) {
+        logDatabaseOperation('bulkUpdate', `BULK UPDATE ${tableName}`, [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute aggregation queries with caching
+ * @param {string} tableName - Table name
+ * @param {Object} aggregations - Aggregation definitions
+ * @param {Object} options - Query options
+ * @returns {Promise<Object>} Aggregation results
+ */
+export const executeAggregation = async (tableName, aggregations, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            where = {},
+            groupBy = null,
+            having = null,
+            includeSoftDeleted = null,
+            useCache = true,
+            cacheTTL = 600
+        } = options;
+
+        // Check cache if enabled
+        if (useCache) {
+            const cacheKey = `aggregation:${tableName}:${Buffer.from(JSON.stringify({ aggregations, where, groupBy, having, includeSoftDeleted })).toString('base64').substring(0, 16)}`;
+            const cached = await cacheService.get(cacheKey);
+            if (cached) {
+                debugDb(`Cache hit for aggregation: ${cacheKey}`);
+                return cached;
+            }
+        }
+
+        // Get table schema
+        const schema = await getTableSchema(tableName);
+
+        // Build aggregation SELECT clause
+        const selectParts = [];
+        Object.entries(aggregations).forEach(([alias, config]) => {
+            const { function: func, column, distinct = false } = config;
+
+            if (!schema.columns[column] && column !== '*') {
+                throw new Error(`Column '${column}' not found in table '${tableName}'`);
+            }
+
+            const distinctClause = distinct ? 'DISTINCT ' : '';
+            selectParts.push(`${func}(${distinctClause}${column}) as ${alias}`);
+        });
+
+        // Add GROUP BY columns to SELECT if specified
+        if (groupBy) {
+            const groupColumns = Array.isArray(groupBy) ? groupBy : [groupBy];
+            groupColumns.forEach(col => {
+                if (!selectParts.some(part => part.includes(col))) {
+                    selectParts.push(col);
+                }
+            });
+        }
+
+        const result = await advancedQuery(tableName, {
+            select: selectParts.join(', '),
+            where,
+            groupBy: Array.isArray(groupBy) ? groupBy.join(', ') : groupBy,
+            having,
+            includeSoftDeleted,
+            useCache: false // We handle caching here
+        });
+
+        // Cache result if enabled
+        if (useCache) {
+            const cacheKey = `aggregation:${tableName}:${Buffer.from(JSON.stringify({ aggregations, where, groupBy, having, includeSoftDeleted })).toString('base64').substring(0, 16)}`;
+            await cacheService.set(cacheKey, result, cacheTTL, [`table:${tableName}`]);
+        }
+
+        logDatabaseOperation('executeAggregation', `AGGREGATION ON ${tableName}`, [], startTime, { rows: result });
+        return result;
+
+    } catch (error) {
+        logDatabaseOperation('executeAggregation', `AGGREGATION ON ${tableName}`, [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Execute full-text search with ranking
+ * @param {string} tableName - Table name
+ * @param {string} searchTerm - Search term
+ * @param {Object} options - Search options
+ * @returns {Promise<Array>} Search results with ranking
+ */
+export const executeFullTextSearch = async (tableName, searchTerm, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            searchColumns = [],
+            limit = 50,
+            offset = 0,
+            minRank = 0.1,
+            language = 'english',
+            includeSoftDeleted = null,
+            useCache = false,
+            cacheTTL = 300
+        } = options;
+
+        if (!searchTerm || searchTerm.trim().length === 0) {
+            throw new Error('Search term cannot be empty');
+        }
+
+        // Get table schema
+        const schema = await getTableSchema(tableName);
+
+        // Validate search columns
+        const validSearchColumns = searchColumns.filter(col => {
+            if (schema.columns[col]) {
+                return true;
+            } else {
+                logger.warn(`Search column '${col}' not found in table '${tableName}', skipping`);
+                return false;
+            }
+        });
+
+        if (validSearchColumns.length === 0) {
+            throw new Error('No valid search columns provided');
+        }
+
+        // Build full-text search query
+        const searchVector = validSearchColumns.map(col => `to_tsvector('${language}', COALESCE(${col}, ''))`).join(' || ');
+        const searchQuery = `to_tsquery('${language}', $1)`;
+
+        let params = [searchTerm.trim().replace(/\s+/g, ' & ')];
+        let paramIndex = 2;
+
+        // Build WHERE clause
+        let whereClauses = [`${searchVector} @@ ${searchQuery}`];
+
+        // Add rank filter
+        if (minRank > 0) {
+            whereClauses.push(`ts_rank(${searchVector}, ${searchQuery}) >= ${paramIndex++}`);
+            params.push(minRank);
+        }
+
+        // Handle soft delete filtering
+        const shouldFilterSoftDeleted = includeSoftDeleted !== null
+            ? !includeSoftDeleted
+            : schema.hasDeletedAt;
+
+        if (shouldFilterSoftDeleted) {
+            whereClauses.push('(deleted_at IS NULL OR deleted_at > NOW())');
+        }
+
+        const whereClause = whereClauses.join(' AND ');
+
+        const queryText = `
+            SELECT *,
+                   ts_rank(${searchVector}, ${searchQuery}) as search_rank,
+                   ts_headline('${language}', ${validSearchColumns[0]}, ${searchQuery}) as highlight
+            FROM ${tableName}
+            WHERE ${whereClause}
+            ORDER BY search_rank DESC, ${schema.hasCreatedAt ? 'created_at DESC' : validSearchColumns[0]}
+            LIMIT ${paramIndex++} OFFSET ${paramIndex}
+        `;
+
+        params.push(limit, offset);
+
+        // Check cache if enabled
+        if (useCache) {
+            const cacheKey = `fts:${tableName}:${Buffer.from(JSON.stringify({ searchTerm, options })).toString('base64').substring(0, 16)}`;
+            const cached = await cacheService.get(cacheKey);
+            if (cached) {
+                debugDb(`Cache hit for full-text search: ${cacheKey}`);
+                return cached;
+            }
+        }
+
+        const result = await query(queryText, params);
+
+        // Cache result if enabled
+        if (useCache) {
+            const cacheKey = `fts:${tableName}:${Buffer.from(JSON.stringify({ searchTerm, options })).toString('base64').substring(0, 16)}`;
+            await cacheService.set(cacheKey, result.rows, cacheTTL, [`table:${tableName}`]);
+        }
+
+        logDatabaseOperation('executeFullTextSearch', queryText, params, startTime, result);
+        return result.rows;
+
+    } catch (error) {
+        logDatabaseOperation('executeFullTextSearch', `FTS ON ${tableName}`, [searchTerm], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Get database statistics and performance metrics
+ * @param {Object} options - Statistics options
+ * @returns {Promise<Object>} Database statistics
+ */
+export const getDatabaseStatistics = async (options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            includeTables = true,
+            includeIndexes = true,
+            includeConnections = true,
+            includeQueries = true
+        } = options;
+
+        const stats = {
+            timestamp: new Date(),
+            database: {},
+            tables: [],
+            indexes: [],
+            connections: null,
+            slowQueries: []
+        };
+
+        // Database-level statistics
+        const dbStatsQuery = `
+            SELECT 
+                pg_database_size(current_database()) as database_size,
+                (SELECT count(*) FROM pg_stat_user_tables) as table_count,
+                (SELECT count(*) FROM pg_stat_user_indexes) as index_count
+        `;
+
+        const dbStatsResult = await query(dbStatsQuery);
+        stats.database = dbStatsResult.rows[0];
+
+        // Table statistics
+        if (includeTables) {
+            const tableStatsQuery = `
+                SELECT 
+                    schemaname,
+                    tablename,
+                    n_tup_ins as inserts,
+                    n_tup_upd as updates,
+                    n_tup_del as deletes,
+                    n_live_tup as live_tuples,
+                    n_dead_tup as dead_tuples,
+                    last_vacuum,
+                    last_autovacuum,
+                    last_analyze,
+                    last_autoanalyze
+                FROM pg_stat_user_tables
+                ORDER BY n_live_tup DESC
+                LIMIT 20
+            `;
+
+            const tableStatsResult = await query(tableStatsQuery);
+            stats.tables = tableStatsResult.rows;
+        }
+
+        // Index statistics
+        if (includeIndexes) {
+            const indexStatsQuery = `
+                SELECT 
+                    schemaname,
+                    tablename,
+                    indexname,
+                    idx_tup_read as index_reads,
+                    idx_tup_fetch as index_fetches,
+                    idx_scan as index_scans
+                FROM pg_stat_user_indexes
+                WHERE idx_scan > 0
+                ORDER BY idx_scan DESC
+                LIMIT 20
+            `;
+
+            const indexStatsResult = await query(indexStatsQuery);
+            stats.indexes = indexStatsResult.rows;
+        }
+
+        // Connection statistics
+        if (includeConnections) {
+            const connectionStatsQuery = `
+                SELECT 
+                    count(*) as total_connections,
+                    count(*) FILTER (WHERE state = 'active') as active_connections,
+                    count(*) FILTER (WHERE state = 'idle') as idle_connections,
+                    count(*) FILTER (WHERE state = 'idle in transaction') as idle_in_transaction
+                FROM pg_stat_activity
+                WHERE pid != pg_backend_pid()
+            `;
+
+            const connectionStatsResult = await query(connectionStatsQuery);
+            stats.connections = connectionStatsResult.rows[0];
+        }
+
+        // Slow query analysis (if pg_stat_statements is available)
+        if (includeQueries) {
+            try {
+                const slowQueriesQuery = `
+                    SELECT 
+                        query,
+                        calls,
+                        total_time,
+                        mean_time,
+                        rows,
+                        100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
+                    FROM pg_stat_statements
+                    WHERE query NOT LIKE '%pg_stat_statements%'
+                    ORDER BY mean_time DESC
+                    LIMIT 10
+                `;
+
+                const slowQueriesResult = await query(slowQueriesQuery);
+                stats.slowQueries = slowQueriesResult.rows;
+            } catch (error) {
+                // pg_stat_statements extension might not be available
+                stats.slowQueries = [];
+            }
+        }
+
+        logDatabaseOperation('getDatabaseStatistics', 'STATISTICS', [], startTime, { rowCount: 1 });
+        return stats;
+
+    } catch (error) {
+        logDatabaseOperation('getDatabaseStatistics', 'STATISTICS', [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Backup table data to JSON format
+ * @param {string} tableName - Table name to backup
+ * @param {Object} options - Backup options
+ * @returns {Promise<Object>} Backup result
+ */
+export const backupTableData = async (tableName, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            where = {},
+            limit = null,
+            batchSize = 1000,
+            includeSoftDeleted = false
+        } = options;
+
+        // Get table schema
+        const schema = await getTableSchema(tableName);
+
+        const backup = {
+            timestamp: new Date(),
+            tableName,
+            schema: schema,
+            totalRecords: 0,
+            data: []
+        };
+
+        // Get total count
+        backup.totalRecords = await countRecords(tableName, where, { includeSoftDeleted });
+
+        if (backup.totalRecords === 0) {
+            logDatabaseOperation('backupTableData', `BACKUP ${tableName}`, [], startTime, { rowCount: 0 });
+            return backup;
+        }
+
+        // Fetch data in batches
+        let offset = 0;
+        const effectiveLimit = limit || backup.totalRecords;
+
+        while (offset < effectiveLimit) {
+            const batchLimit = Math.min(batchSize, effectiveLimit - offset);
+
+            const batchData = await advancedQuery(tableName, {
+                where,
+                limit: batchLimit,
+                offset,
+                includeSoftDeleted,
+                orderBy: schema.primaryKey?.[0] || Object.keys(schema.columns)[0]
+            });
+
+            backup.data.push(...batchData);
+            offset += batchSize;
+
+            if (batchData.length < batchLimit) {
+                break; // No more data
+            }
+        }
+
+        logDatabaseOperation('backupTableData', `BACKUP ${tableName}`, [], startTime, { rowCount: backup.data.length });
+        return backup;
+
+    } catch (error) {
+        logDatabaseOperation('backupTableData', `BACKUP ${tableName}`, [], startTime, null, error);
+        throw error;
+    }
+};
+
+/**
+ * Restore table data from backup
+ * @param {string} tableName - Table name to restore
+ * @param {Object} backupData - Backup data object
+ * @param {Object} options - Restore options
+ * @returns {Promise<Object>} Restore result
+ */
+export const restoreTableData = async (tableName, backupData, options = {}) => {
+    const startTime = Date.now();
+
+    try {
+        const {
+            truncateFirst = false,
+            onConflict = 'update',
+            batchSize = 1000,
+            validateSchema = true
+        } = options;
+
+        if (!backupData.data || !Array.isArray(backupData.data)) {
+            throw new Error('Invalid backup data format');
+        }
+
+        let restoredCount = 0;
+
+        await executeTransaction(async (client) => {
+            // Truncate table if requested
+            if (truncateFirst) {
+                await client.query(`TRUNCATE TABLE ${tableName} RESTART IDENTITY CASCADE`);
+            }
+
+            // Get current schema for validation
+            let schema = null;
+            if (validateSchema) {
+                schema = await getTableSchema(tableName);
+            }
+
+            // Restore data in batches
+            for (let i = 0; i < backupData.data.length; i += batchSize) {
+                const batch = backupData.data.slice(i, i + batchSize);
+
+                for (const record of batch) {
+                    let validData = record;
+
+                    // Validate against current schema if enabled
+                    if (schema) {
+                        validData = {};
+                        Object.entries(record).forEach(([key, value]) => {
+                            if (schema.columns[key]) {
+                                validData[key] = value;
+                            }
+                        });
+                    }
+
+                    const result = await insertRecord(tableName, validData, {
+                        onConflict,
+                        conflictColumns: schema?.primaryKey,
+                        validate: false
+                    });
+
+                    if (result) restoredCount++;
+                }
+            }
+
+            return restoredCount;
+        });
+
+        // Invalidate cache after restore
+        await invalidateCache(tableName, 'restore');
+
+        logDatabaseOperation('restoreTableData', `RESTORE ${tableName}`, [], startTime, { rowCount: restoredCount });
+        return {
+            tableName,
+            restoredRecords: restoredCount,
+            totalRecords: backupData.data.length,
+            timestamp: new Date()
+        };
+
+    } catch (error) {
+        logDatabaseOperation('restoreTableData', `RESTORE ${tableName}`, [], startTime, null, error);
+        throw error;
+    }
+};
+
 // Export all functions
 export {
     logDatabaseOperation,
     executeWithTimeout,
     invalidateCache,
     generateCacheKeys,
-    clearSchemaCache
+    clearSchemaCache,
+    getProcedureSchema
 };
