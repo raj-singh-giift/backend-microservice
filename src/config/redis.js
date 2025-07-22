@@ -6,6 +6,7 @@ import logger from './logger.js';
 const debugRedis = debug('app:redis');
 
 let redisClient = null;
+let redisEnabled = config.redis.enabled;
 
 /**
  * Redis connection configuration
@@ -32,6 +33,13 @@ const redisConfig = {
  * Connect to Redis
  */
 export const connectRedis = async () => {
+    // Check if Redis is enabled
+    if (!redisEnabled) {
+        logger.info('Redis is disabled, skipping connection');
+        debugRedis('Redis disabled, skipping connection');
+        return null;
+    }
+
     try {
         if (redisClient && redisClient.isOpen) {
             debugRedis('Redis client already connected');
@@ -96,6 +104,9 @@ const setupRedisEventListeners = () => {
  * Get Redis client instance
  */
 export const getRedisClient = () => {
+    if (!redisEnabled) {
+        throw new Error('Redis is disabled. Set REDIS_ENABLED=true to enable Redis.');
+    }
     if (!redisClient || !redisClient.isOpen) {
         throw new Error('Redis not connected. Call connectRedis() first.');
     }
@@ -109,6 +120,11 @@ export const getRedisClient = () => {
  * @param {number} ttl - Time to live in seconds
  */
 export const setCache = async (key, value, ttl = config.redis.ttl) => {
+    if (!redisEnabled) {
+        debugRedis(`Cache set skipped (Redis disabled): ${key}`);
+        return;
+    }
+
     try {
         const client = getRedisClient();
         const serializedValue = JSON.stringify(value);
@@ -132,6 +148,11 @@ export const setCache = async (key, value, ttl = config.redis.ttl) => {
  * @returns {Promise<any>} Cached value or null
  */
 export const getCache = async (key) => {
+    if (!redisEnabled) {
+        debugRedis(`Cache get skipped (Redis disabled): ${key}`);
+        return null;
+    }
+
     try {
         const client = getRedisClient();
         const value = await client.get(key);
@@ -154,6 +175,11 @@ export const getCache = async (key) => {
  * @param {string} key - Redis key
  */
 export const deleteCache = async (key) => {
+    if (!redisEnabled) {
+        debugRedis(`Cache delete skipped (Redis disabled): ${key}`);
+        return false;
+    }
+
     try {
         const client = getRedisClient();
         const result = await client.del(key);
@@ -171,6 +197,11 @@ export const deleteCache = async (key) => {
  * @returns {Promise<boolean>} True if key exists
  */
 export const existsCache = async (key) => {
+    if (!redisEnabled) {
+        debugRedis(`Cache exists check skipped (Redis disabled): ${key}`);
+        return false;
+    }
+
     try {
         const client = getRedisClient();
         const exists = await client.exists(key);
@@ -188,6 +219,11 @@ export const existsCache = async (key) => {
  * @param {number} ttl - Time to live in seconds
  */
 export const setCacheMultiple = async (keyValuePairs, ttl = config.redis.ttl) => {
+    if (!redisEnabled) {
+        debugRedis(`Multiple cache set skipped (Redis disabled): ${Object.keys(keyValuePairs).length} keys`);
+        return;
+    }
+
     try {
         const client = getRedisClient();
         const multi = client.multi();
@@ -213,6 +249,14 @@ export const setCacheMultiple = async (keyValuePairs, ttl = config.redis.ttl) =>
  * Redis health check
  */
 export const redisHealthCheck = async () => {
+    if (!redisEnabled) {
+        return {
+            status: 'disabled',
+            timestamp: new Date().toISOString(),
+            message: 'Redis is disabled via REDIS_ENABLED=false'
+        };
+    }
+
     try {
         if (!redisClient || !redisClient.isOpen) {
             return {
@@ -243,6 +287,11 @@ export const redisHealthCheck = async () => {
  * Close Redis connection
  */
 export const closeRedis = async () => {
+    if (!redisEnabled) {
+        logger.info('Redis is disabled, no connection to close');
+        return;
+    }
+
     if (redisClient && redisClient.isOpen) {
         await redisClient.quit();
         redisClient = null;

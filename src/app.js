@@ -195,8 +195,12 @@ const connectServices = async () => {
 
         // Then connect to Redis (optional - app should work without Redis)
         try {
-            await connectRedis();
-            logger.info('Redis connected successfully');
+            const redisResult = await connectRedis();
+            if (redisResult === null) {
+                logger.info('Redis is disabled, skipping connection');
+            } else {
+                logger.info('Redis connected successfully');
+            }
         } catch (redisError) {
             logger.warn('Redis connection failed, continuing without Redis:', redisError.message);
         }

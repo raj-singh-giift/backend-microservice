@@ -66,6 +66,7 @@ const config = {
 
     // Redis
     redis: {
+        enabled: process.env.REDIS_ENABLED !== 'false', // Default to true unless explicitly set to 'false'
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT, 10) || 6379,
         password: process.env.REDIS_PASSWORD || undefined,

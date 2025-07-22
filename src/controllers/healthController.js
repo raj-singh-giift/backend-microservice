@@ -45,7 +45,7 @@ export const detailedHealthCheck = async (req, res) => {
 
     // Determine overall health status
     const isHealthy = Object.values(checks).every(check =>
-        check.status === 'healthy' || check.status === 'OK'
+        check.status === 'healthy' || check.status === 'OK' || check.status === 'disabled'
     );
 
     const status = isHealthy ? 'healthy' : 'unhealthy';
@@ -75,7 +75,7 @@ export const readinessCheck = async (req, res) => {
         const redisCheck = await redisHealthCheck();
 
         const isReady = dbCheck.status === 'healthy' &&
-            (redisCheck.status === 'healthy' || redisCheck.status === 'disconnected');
+            (redisCheck.status === 'healthy' || redisCheck.status === 'disconnected' || redisCheck.status === 'disabled');
 
         if (isReady) {
             res.json({

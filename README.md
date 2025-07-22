@@ -85,6 +85,7 @@ DB_POOL_MIN=2
 DB_POOL_MAX=10
 
 # Redis
+REDIS_ENABLED=true  # Set to 'false' to disable Redis completely
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=
@@ -114,6 +115,34 @@ CORS_CREDENTIALS=true
 # Security
 BCRYPT_SALT_ROUNDS=12
 CSRF_SECRET=your_csrf_secret
+```
+
+## Redis Configuration
+
+The application supports conditional Redis usage through the `REDIS_ENABLED` environment variable:
+
+### Enable Redis (Default)
+```env
+REDIS_ENABLED=true
+```
+
+### Disable Redis
+```env
+REDIS_ENABLED=false
+```
+
+When Redis is disabled:
+- No Redis connection will be attempted
+- All cache operations will be skipped gracefully
+- The application will continue to function normally
+- Cache-related functions will return appropriate default values
+- Health checks will show Redis as "disabled"
+
+This feature is useful for:
+- Development environments without Redis
+- Testing scenarios
+- Production deployments where Redis is not available
+- Cost optimization in certain deployment scenarios
 ```
 
 ## Docker Configuration

@@ -32,7 +32,11 @@ class RedisStore {
             };
         } catch (error) {
             logger.error('Rate limit store error:', error);
-            throw error;
+            // Return a default response when Redis is not available
+            return {
+                totalHits: 1,
+                resetTime: new Date(Date.now() + config.rateLimit.windowMs)
+            };
         }
     }
 
@@ -71,8 +75,8 @@ export const rateLimiter = rateLimit({
     standardHeaders: config.rateLimit.standardHeaders,
     legacyHeaders: config.rateLimit.legacyHeaders,
 
-    // Use Redis store if available
-    store: process.env.NODE_ENV === 'production' ? new RedisStore() : undefined,
+    // Use Redis store if available and Redis is enabled
+    store: (process.env.NODE_ENV === 'production' && config.redis.enabled) ? new RedisStore() : undefined,
 
     // Custom key generator
     keyGenerator: (req) => {
